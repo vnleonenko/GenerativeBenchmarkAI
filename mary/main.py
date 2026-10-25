@@ -17,13 +17,13 @@ from queries import PROMPT_NAME_ERRORS
 
 
 class ErrorIdentify(BaseModel):
-    reasoning: str = Field(description='Explain: why the model assessment was incorrect? UNDER 600 characters', max_length=600)
+    reasoning: str = Field(description='Explain: why the model assessment was incorrect? UNDER 800 characters', max_length=800)
     error: str = Field(description="A concise description of the model's error. UNDER 400 characters", max_length=400)
 
     @field_validator('reasoning', mode='before')
     @classmethod
     def truncate_f(cls, v):
-        return v[:600]
+        return v[:800]
 
     @field_validator('error', mode='before')
     @classmethod
@@ -117,7 +117,7 @@ def find_mistakes(df_pred, df_expert):
 
 def find_ind_errors(errors_df,fin_condition,treatment):
 
-    user_prompt = """
+    user_prompt0 = """
     eligibility_criteria = "{eligibility_criteria}"
     abstract = "{abstract}"
     model_rationale = "{model_rationale}"
@@ -131,8 +131,8 @@ def find_ind_errors(errors_df,fin_condition,treatment):
     
     for error_one in errors_df.values:
         pmid, num,abstract,model_score,model_rationale,expert_score,expert_rationale =  error_one
-
-        user_prompt = user_prompt.format(eligibility_criteria = \
+        logging.info(f"{pmid}, {num}, {model_rationale[:200]}")
+        user_prompt = user_prompt0.format(eligibility_criteria = \
                                          papers_criteria[num-1].format(treatment=treatment,
                                                                        fin_condition=fin_condition),
                                  abstract=abstract,
@@ -147,7 +147,7 @@ def find_ind_errors(errors_df,fin_condition,treatment):
                             {'role':'user', 'content':user_prompt}
                         ])
 
-
+    #print([i[2:] for i in messages])
     outputs = batch_function_call_openai([i[1:] for i in messages], 
                                     os.getenv('MODEL_NAME'), 
                                     [ErrorIdentify],
@@ -164,4 +164,4 @@ def find_ind_errors(errors_df,fin_condition,treatment):
         all_resp.append(one_response)
 
     logging.info(resultsct)'''
-    return ErrorIdentify
+    return outputs
