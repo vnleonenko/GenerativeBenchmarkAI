@@ -13,12 +13,12 @@ from typing_extensions import Literal
 from typing import Dict,Annotated
 
 from queries import papers_criteria as papers_criteria
-from queries import PROMPT_NAME_ERRORS
+from queries import PROMPT_NAME_ERRORS,PROMPT_CLUSTER_ERRORS
 
 
 class ErrorIdentify(BaseModel):
     reasoning: str = Field(description='Explain: why the model assessment was incorrect? UNDER 800 characters', max_length=800)
-    error: str = Field(description="A concise description of the model's error. UNDER 400 characters", max_length=400)
+    error: str = Field(description="A concise description of the model's error. UNDER 350 characters", max_length=350)
 
     @field_validator('reasoning', mode='before')
     @classmethod
@@ -28,9 +28,46 @@ class ErrorIdentify(BaseModel):
     @field_validator('error', mode='before')
     @classmethod
     def truncate_fs(cls, v):
-        return v[:400]
-    
+        return v[:350]
 
+    
+class Cluster(BaseModel):
+    reasoning: str = Field(description='Explain briefly: why this cluster is necessary? UNDER 300 characters', max_length=300)
+    index: int 
+    name: str = Field(description="A concise description of the error cluster. UNDER 100 characters", max_length=100)
+
+    @field_validator('reasoning', mode='before')
+    @classmethod
+    def truncate_r(cls, v):
+        return v[:300]
+    
+    @field_validator('name', mode='before')
+    @classmethod
+    def truncate_fs(cls, v):
+        return v[:100]
+    
+class Error(BaseModel):
+    reasoning: str = Field(description='Explain briefly: why the error is in this cluster? UNDER 100 characters', max_length=100)
+    error_index: int
+    cluster_index: int
+
+    @field_validator('reasoning', mode='before')
+    @classmethod
+    def truncate_r(cls, v):
+        return v[:100]
+
+class ErrorsAndClusters(BaseModel):
+    reasoning: str = Field(description='Briefly explain the clustering strategy. UNDER 1000 characters', max_length=1000)
+    clusters: list[Cluster]
+    errors: list[Error]
+
+    @field_validator('reasoning', mode='before')
+    @classmethod
+    def truncate_f(cls, v):
+        return v[:1000]
+
+
+    
 def run_screening(pmid_list, fin_condition, treatment,
                   ps_thresh = [1,1,0], real=False):
     # collect text from pmid
@@ -126,7 +163,6 @@ def find_ind_errors(errors_df,fin_condition,treatment):
     expert_score = {expert_score}
     your_response = 
     """
-    resultsct = {}
     messages = []
     
     for error_one in errors_df.values:
@@ -154,14 +190,59 @@ def find_ind_errors(errors_df,fin_condition,treatment):
                                     int(os.getenv('TEMPERATURE', 0)), 
                                     thinking=False)
         
-        
+    #errors_df['error_id'] = [i.model_dump_json() for i in outputs]
+    errors_df.loc[:,['error_id_reason','error_id']] = [[i.reasoning, i.error]
+                                                 for i in outputs]    
     '''for paper_id, one_response in enumerate(outputs):
-        papers_res_fin.iloc[paper_id,
-                            papers_res_fin.columns.get_loc('enhanced')
+        errors_df.iloc[paper_id,
+                            errors_df.columns.get_loc('enhanced')
                             ] = one_response.model_dump_json()
         #logging.info(one_response)
         logging.info('')
         all_resp.append(one_response)
 
     logging.info(resultsct)'''
-    return outputs
+    return errors_df
+
+
+def find_error_clusters(errors_df,fin_condition,treatment):
+    errors = errors_df[['PMID','num','error_id']]
+   # errors.loc[:,'error_id'] = errors['error_id'].apply(lambda x: x.error)
+
+    user_prompt0 = """
+    eligibility_criteria = {eligibility_criteria}
+    model_errors = {model_errors}
+    your_response = 
+    """
+    messages = []
+
+    unique_criteria = errors['num'].unique()
+    eligibility_criteria = [papers_criteria[num-1].format(
+                                treatment=treatment,
+                                fin_condition=fin_condition
+                                ) for num in unique_criteria]
+    
+    model_errors = 'error_index | criteria_num | error_description\n'
+    for idx,i in enumerate(errors.iloc[:,1:].values):
+        model_errors+=f"{idx} | {i[0]} | {i[1]}\n"
+
+    user_prompt = user_prompt0.format(eligibility_criteria = eligibility_criteria,
+                                model_errors=model_errors)
+    
+    messages.append([{'role':'system', 
+                        'content':PROMPT_CLUSTER_ERRORS+' \no_think'},
+                        {'role':'user', 'content':user_prompt}
+                    ])
+
+    outputs = batch_function_call_openai(messages, 
+                                    os.getenv('MODEL_NAME'), 
+                                    [ErrorsAndClusters],
+                                    int(os.getenv('TEMPERATURE', 0)), 
+                                    thinking=False
+                                    )[0]
+        
+    errors_df.loc[:,['error_type_reason','error_type']] = [[i.reasoning, 
+                                *[j.name for j in outputs.clusters if j.index==i.cluster_index]] 
+                                for i in outputs.errors]
+
+    return errors_df,outputs

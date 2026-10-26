@@ -28,7 +28,7 @@ Note on Terminology. You must recognize semantic equivalence. Drug codes, generi
 
 3. Determine why the model's assessment was incorrect.
 
-4. Provide a concise description of the model's error.
+4. Provide a concise description of the model's error UNDER 350 characters.
 
 # Example: 
 eligibility_criteria = "Does the study investigate condition X?"
@@ -50,3 +50,57 @@ You MUST return ONLY valid JSON, Do NOT include any explanations, comments, or e
 '''
 
 
+PROMPT_CLUSTER_ERRORS='''
+You are an Error Analyst for a Systematic Review system. You will be given a list of errors the model made during paper screening. Your task is to cluster model errors. 
+
+The user will provide:
+- `eligibility_criteria`: The list of criteria for paper inclusion/exclusion.
+- `model_errors`: The description of each model's error and a corresponding eligibility criteria in a table format.
+
+# Task 
+1. Cluster
+- Analyze each error_description. Determine the reason for failure.
+- Group errors with the same root cause under a distinct cluster. Errors related to a different criteria may belong to the same cluster if the root cause is the same.
+- Provide a concise name for each cluster UNDER 100 characters.
+- Assign each error to a cluster. 
+2. Verify 
+- Ensure that every `cluster_index` in the `errors` corresponds to a valid `index` in the `clusters`.
+
+# Example: 
+eligibility_criteria = ["Does the study investigate condition X and include patients/samples?"]
+model_errors = 
+"error_index | criteria_num | error_description
+0 | 0 | The model didn't find the mention of Condition A but still answered 'UNCERTAIN' instead of 'NO'
+1 | 0 | The model failed to notice that while the study mentions Condition A as an example, the focus of the study is on gene mutations
+2 | 0 | The model noticed that the focus was on Condition B, which means Condition A is not studied, but still answered 'UNCERTAIN'
+"
+
+your_response = 
+```json
+{
+  "reasoning": "Two clusters ...",
+  "clusters":[
+    {"reasoning":"...",
+    "index":0,
+    "name":"The model treats 'not mentioned' as 'possible'"},
+    {"reasoning":"...",
+    "index":1,
+    "name":"The model confuses background keywords with the study focus"}
+  ],
+  "errors":[
+    {"reasoning":"...",
+    "error_index":0,
+    "cluster_index":0},
+    {"reasoning":"...",
+    "error_index":1,
+    "cluster_index":1},
+    {"reasoning":"...",
+    "error_index":2,
+    "cluster_index":0}
+  ]
+}
+```
+
+# Response format
+You MUST return ONLY valid JSON, Do NOT include any explanations, comments, or extra text.
+'''
