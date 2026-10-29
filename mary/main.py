@@ -13,7 +13,7 @@ from typing_extensions import Literal
 from typing import Dict,Annotated
 
 from queries import papers_criteria as papers_criteria
-from queries import PROMPT_NAME_ERRORS,PROMPT_CLUSTER_ERRORS
+from queries import PROMPT_NAME_ERRORS,PROMPT_CLUSTER_ERRORS, PROMPT_AUGMENT, PROMPT_ADD_KNOWN_SCORE
 
 
 class ErrorIdentify(BaseModel):
@@ -30,11 +30,12 @@ class ErrorIdentify(BaseModel):
     def truncate_fs(cls, v):
         return v[:350]
 
-    
+# ---     
 class Cluster(BaseModel):
     reasoning: str = Field(description='Explain briefly: why this cluster is necessary? UNDER 300 characters', max_length=300)
     index: int 
     name: str = Field(description="A concise description of the error cluster. UNDER 100 characters", max_length=100)
+    notable_pointers: list[str] = Field(description="Short phrases describing how the root cause manifested in specific papers in this cluster", min_length=1, max_length=5)
 
     @field_validator('reasoning', mode='before')
     @classmethod
@@ -66,6 +67,62 @@ class ErrorsAndClusters(BaseModel):
     def truncate_f(cls, v):
         return v[:1000]
 
+    
+# ---   
+class CriteriaScore(BaseModel):
+    criteria_index: int
+    new_expert_rationale: str = Field(description='A rationale for a criterion evaluation; UNDER 350 characters', max_length=350)
+    new_expert_score: Literal[1, -1, 0] = Field(description=f"Evaluation for a criterion")
+    @field_validator('new_expert_rationale', mode='before')
+    @classmethod
+    def truncate_r(cls, v):
+        return v[:350]
+
+class ScreeningSample2(BaseModel):
+    error_type_index: int
+    reasoning: str = Field(description='Briefly explain the abstract changes and what it tests in the model. UNDER 350 characters', max_length=350)
+    new_abstract: str = Field(description='Changed abstract. UNDER 3000 characters', max_length=3000)
+    new_ground_truth: list[CriteriaScore]
+
+    @field_validator('reasoning', mode='before')
+    @classmethod
+    def truncate_r(cls, v):
+        return v[:350]
+    @field_validator('new_abstract', mode='before')
+    @classmethod
+    def truncate_a(cls, v):
+        return v[:3000]
+
+class ScreeningSample(BaseModel):
+    error_type_index: int
+    reasoning: str = Field(description='Briefly explain the abstract changes and what it tests in the model. UNDER 350 characters', max_length=350)
+    new_abstract: str = Field(description='Changed abstract. UNDER 3000 characters', max_length=3000)
+
+    @field_validator('reasoning', mode='before')
+    @classmethod
+    def truncate_r(cls, v):
+        return v[:350]
+    @field_validator('new_abstract', mode='before')
+    @classmethod
+    def truncate_a(cls, v):
+        return v[:3000]
+    
+class AugmentedSamples(BaseModel):
+    new_samples: list[ScreeningSample]
+
+
+class SampleScore(BaseModel):
+    error_type_index: int
+    reasoning: str = Field(description='Briefly explain what the change tests and what must be the correct answer. UNDER 350 characters', max_length=350)
+    new_ground_truth: list[CriteriaScore]
+
+    @field_validator('reasoning', mode='before')
+    @classmethod
+    def truncate_r(cls, v):
+        return v[:350]
+    
+class SamplesWIthScore(BaseModel):
+    new_samples: list[SampleScore]
 
     
 def run_screening(pmid_list, fin_condition, treatment,
@@ -139,6 +196,7 @@ def run_screening(pmid_list, fin_condition, treatment,
 
 
 def find_mistakes(df_pred, df_expert):
+    df_pred.PMID = df_pred.PMID.astype(str)
     pmid_list=df_pred.PMID.values
     df_long = pd.wide_to_long(df_pred, stubnames=['s', 'r'], 
                               i='PMID', j='num').reset_index()
@@ -149,7 +207,8 @@ def find_mistakes(df_pred, df_expert):
             on=['PMID','num'],suffixes=('_pred','_expert')
             ).sort_values(by='PMID')
     errors_df = merged[merged.s_pred!=merged.s_expert]
-    return errors_df
+    correct_df = merged[merged.s_pred==merged.s_expert]
+    return errors_df, correct_df
 
 
 def find_ind_errors(errors_df,fin_condition,treatment):
@@ -228,7 +287,7 @@ def find_error_clusters(errors_df,fin_condition,treatment):
 
     user_prompt = user_prompt0.format(eligibility_criteria = eligibility_criteria,
                                 model_errors=model_errors)
-    
+    print(user_prompt)
     messages.append([{'role':'system', 
                         'content':PROMPT_CLUSTER_ERRORS+' \no_think'},
                         {'role':'user', 'content':user_prompt}
@@ -246,3 +305,142 @@ def find_error_clusters(errors_df,fin_condition,treatment):
                                 for i in outputs.errors]
 
     return errors_df,outputs
+
+
+def augment_samples(error_type_df,correct_df,
+                    error_class,
+                    pmid_list,
+                    fin_condition,treatment):
+    
+    error_type_df.PMID = error_type_df.PMID.astype(str)
+    user_prompt0 = """
+    error_types = {error_types}
+    eligibility_criteria = {eligibility_criteria}
+    abstract = {abstract}
+    expert_screening = {expert_screening}
+    your_response = 
+    """
+    messages = []
+
+    error_types = 'error_index | error_type_description | notable_pointers\n'
+    for idx,cl_name in enumerate(error_type_df.error_type.unique()):
+        notable_p = [c for c in error_class.clusters if c.name==cl_name][0]
+        error_types+=f"{idx} | {cl_name} | {notable_p.notable_pointers}\n"
+    #print(error_types)
+
+    eligibility_criteria_t = [papers_criteria[num].format(
+                                treatment=treatment,
+                                fin_condition=fin_condition
+                                ) for num in range(0,3)]
+
+    eligibility_criteria = "criteria_index | criteria_description\n"
+    for idx,i in enumerate(eligibility_criteria_t):
+        eligibility_criteria+=f"{idx} | {i}\n"
+    #print(eligibility_criteria)
+
+    for pmid in pmid_list:
+        abstract = correct_df[correct_df.PMID==pmid].Fin_text.iloc[0]
+
+        expert_screening = "criteria_index | score | rationale\n"
+        for idx,i in enumerate(correct_df[correct_df.PMID==pmid
+                                          ].sort_values('num').values):
+            expert_screening+=f"{i[1]-1} | {i[-2]} | {i[-1]}\n"
+
+        user_prompt = user_prompt0.format(error_types = error_types,
+                                    eligibility_criteria=eligibility_criteria,
+                                    abstract=abstract,
+                                    expert_screening=expert_screening)
+        
+        messages.append([{'role':'system', 
+                            'content':PROMPT_AUGMENT+' \no_think'},
+                            {'role':'user', 'content':user_prompt}
+                        ])
+
+    outputs = batch_function_call_openai(messages, 
+                                    os.getenv('MODEL_NAME'), 
+                                    [AugmentedSamples],
+                                    int(os.getenv('TEMPERATURE', 0)), 
+                                    #0.7,
+                                    thinking=False
+                                    )
+    alldf = []
+    '''for i,pmid in enumerate(pmid_list):
+        df = pd.DataFrame([d.model_dump() for d in outputs[i].new_samples])
+        # превращая каждый элемент в отдельную строку
+        df_exploded = df.explode("new_ground_truth").reset_index(drop=True)
+        # Разворачиваем словари в отдельные колонки
+        df_c = pd.json_normalize(df_exploded["new_ground_truth"])
+        df_final = pd.concat([df_exploded.drop(columns=["new_ground_truth"]), df_c], axis=1)
+
+        df_final['PMID'] = pmid
+        alldf.append(df_final)
+    alldf = pd.concat(alldf)    '''
+
+    '''errors_df.loc[:,['error_type_reason','error_type']] = [[i.reasoning, 
+                                *[j.name for j in outputs.clusters if j.index==i.cluster_index]] 
+                                for i in outputs.errors]
+    '''
+    return outputs,alldf
+
+
+
+def add_correct_scores(change_class,
+                    fin_condition,treatment):
+    
+    user_prompt0 = """
+    new_abstracts = {new_abstracts}
+    eligibility_criteria = {eligibility_criteria}
+    your_response = 
+    """
+    messages = []
+
+    change_df = pd.DataFrame([j.model_dump() for i in change_class for j in i.new_samples])
+
+    error_types = 'error_type_index | change_reasoning | new_abstract\n'
+    for c_name in change_df.values:
+        error_types+=f"{c_name[0]} | {c_name[1]} | {c_name[2]}\n"
+    #print(error_types)
+
+    eligibility_criteria_t = [papers_criteria[num].format(
+                                treatment=treatment,
+                                fin_condition=fin_condition
+                                ) for num in range(0,3)]
+
+    eligibility_criteria = "criteria_index | criteria_description\n"
+    for idx,i in enumerate(eligibility_criteria_t):
+        eligibility_criteria+=f"{idx} | {i}\n"
+    #print(eligibility_criteria)
+
+    user_prompt = user_prompt0.format(new_abstracts = error_types,
+                                eligibility_criteria=eligibility_criteria)
+    
+    messages.append([{'role':'system', 
+                        'content':PROMPT_ADD_KNOWN_SCORE+' \no_think'},
+                        {'role':'user', 'content':user_prompt}
+                    ])
+
+    outputs = batch_function_call_openai(messages, 
+                                    os.getenv('MODEL_NAME'), 
+                                    [SamplesWIthScore],
+                                    int(os.getenv('TEMPERATURE', 0)), 
+                                    #0.7,
+                                    thinking=False
+                                    )
+    alldf = []
+    for i,pmid in enumerate(outputs):
+        df = pd.DataFrame([d.model_dump() for d in outputs[i].new_samples])
+        # превращая каждый элемент в отдельную строку
+        df_exploded = df.explode("new_ground_truth").reset_index(drop=True)
+        # Разворачиваем словари в отдельные колонки
+        df_c = pd.json_normalize(df_exploded["new_ground_truth"])
+        df_final = pd.concat([df_exploded.drop(columns=["new_ground_truth"]), df_c], axis=1)
+
+        #df_final['PMID'] = pmid
+        alldf.append(df_final)
+    alldf = pd.concat(alldf)   
+
+    '''errors_df.loc[:,['error_type_reason','error_type']] = [[i.reasoning, 
+                                *[j.name for j in outputs.clusters if j.index==i.cluster_index]] 
+                                for i in outputs.errors]
+    '''
+    return outputs,alldf
