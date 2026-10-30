@@ -1,128 +1,40 @@
-from trialmind.pubmed import pmid2papers, PubmedAPIWrapper
-from trialmind.api import LiteratureScreening
-from trialmind.llm_utils.openai_async import batch_function_call_openai
-
 import os
+from dotenv import load_dotenv, find_dotenv
+
+use = 'rogozin'
+if use == 'rogozin':
+    os.environ["BASE_URL"] = "http://localhost:8501/v1"
+    os.environ["MODEL_NAME"] ='/models/Qwen3.6-27B-UD-Q4_K_XL.gguf'#'ggml-org/gemma-3-1b-it-GGUF'
+    os.environ["TRANSL_MODEL_NAME"] = '/models/Qwen3.6-27B-UD-Q4_K_XL.gguf'
+    os.environ["OPENAI_API_KEY"] = 'hello'
+elif use == 'sirius':
+    os.environ["BASE_URL"] = "http://127.0.0.1:8082/v1"
+    os.environ["MODEL_NAME"] ='Qwen3.6-27B'#'ggml-org/gemma-3-1b-it-GGUF'
+    os.environ["OPENAI_API_KEY"] = 'hello'
+    os.environ["TRANSL_MODEL_NAME"] = 'Qwen3.6-27B'
+os.environ['TEMPERATURE'] = '0'
+
 import ftfy
 import logging
 import time
 import numpy as np
 import pandas as pd
+from pathlib import Path
 from pydantic import BaseModel, validator, Field, field_validator, conlist,BeforeValidator
 from typing_extensions import Literal
 from typing import Dict,Annotated
+from sklearn.model_selection import train_test_split
 
 from queries import papers_criteria as papers_criteria
-from queries import PROMPT_NAME_ERRORS,PROMPT_CLUSTER_ERRORS, PROMPT_AUGMENT, PROMPT_ADD_KNOWN_SCORE
+from queries import *
+from trialmind.pubmed import pmid2papers, PubmedAPIWrapper
+from trialmind.api import LiteratureScreening
+from trialmind.llm_utils.openai_async import batch_function_call_openai,batch_call_openai
+from trialmind.pydantic_classes import *
 
 
-class ErrorIdentify(BaseModel):
-    reasoning: str = Field(description='Explain: why the model assessment was incorrect? UNDER 800 characters', max_length=800)
-    error: str = Field(description="A concise description of the model's error. UNDER 350 characters", max_length=350)
 
-    @field_validator('reasoning', mode='before')
-    @classmethod
-    def truncate_f(cls, v):
-        return v[:800]
-
-    @field_validator('error', mode='before')
-    @classmethod
-    def truncate_fs(cls, v):
-        return v[:350]
-
-# ---     
-class Cluster(BaseModel):
-    reasoning: str = Field(description='Explain briefly: why this cluster is necessary? UNDER 300 characters', max_length=300)
-    index: int 
-    name: str = Field(description="A concise description of the error cluster. UNDER 100 characters", max_length=100)
-    notable_pointers: list[str] = Field(description="Short phrases describing how the root cause manifested in specific papers in this cluster", min_length=1, max_length=5)
-
-    @field_validator('reasoning', mode='before')
-    @classmethod
-    def truncate_r(cls, v):
-        return v[:300]
-    
-    @field_validator('name', mode='before')
-    @classmethod
-    def truncate_fs(cls, v):
-        return v[:100]
-    
-class Error(BaseModel):
-    reasoning: str = Field(description='Explain briefly: why the error is in this cluster? UNDER 100 characters', max_length=100)
-    error_index: int
-    cluster_index: int
-
-    @field_validator('reasoning', mode='before')
-    @classmethod
-    def truncate_r(cls, v):
-        return v[:100]
-
-class ErrorsAndClusters(BaseModel):
-    reasoning: str = Field(description='Briefly explain the clustering strategy. UNDER 1000 characters', max_length=1000)
-    clusters: list[Cluster]
-    errors: list[Error]
-
-    @field_validator('reasoning', mode='before')
-    @classmethod
-    def truncate_f(cls, v):
-        return v[:1000]
-
-    
-# ---   
-class CriteriaScore(BaseModel):
-    criteria_index: int
-    new_expert_rationale: str = Field(description='A rationale for a criterion evaluation; UNDER 350 characters', max_length=350)
-    new_expert_score: Literal[1, -1, 0] = Field(description=f"Evaluation for a criterion")
-    @field_validator('new_expert_rationale', mode='before')
-    @classmethod
-    def truncate_r(cls, v):
-        return v[:350]
-
-class ScreeningSample2(BaseModel):
-    error_type_index: int
-    reasoning: str = Field(description='Briefly explain the abstract changes and what it tests in the model. UNDER 350 characters', max_length=350)
-    new_abstract: str = Field(description='Changed abstract. UNDER 3000 characters', max_length=3000)
-    new_ground_truth: list[CriteriaScore]
-
-    @field_validator('reasoning', mode='before')
-    @classmethod
-    def truncate_r(cls, v):
-        return v[:350]
-    @field_validator('new_abstract', mode='before')
-    @classmethod
-    def truncate_a(cls, v):
-        return v[:3000]
-
-class ScreeningSample(BaseModel):
-    error_type_index: int
-    reasoning: str = Field(description='Briefly explain the abstract changes and what it tests in the model. UNDER 350 characters', max_length=350)
-    new_abstract: str = Field(description='Changed abstract. UNDER 3000 characters', max_length=3000)
-
-    @field_validator('reasoning', mode='before')
-    @classmethod
-    def truncate_r(cls, v):
-        return v[:350]
-    @field_validator('new_abstract', mode='before')
-    @classmethod
-    def truncate_a(cls, v):
-        return v[:3000]
-    
-class AugmentedSamples(BaseModel):
-    new_samples: list[ScreeningSample]
-
-
-class SampleScore(BaseModel):
-    error_type_index: int
-    reasoning: str = Field(description='Briefly explain what the change tests and what must be the correct answer. UNDER 350 characters', max_length=350)
-    new_ground_truth: list[CriteriaScore]
-
-    @field_validator('reasoning', mode='before')
-    @classmethod
-    def truncate_r(cls, v):
-        return v[:350]
-    
-class SamplesWIthScore(BaseModel):
-    new_samples: list[SampleScore]
+load_dotenv(find_dotenv(usecwd=True), override=True)
 
     
 def run_screening(pmid_list, fin_condition, treatment,
@@ -322,10 +234,10 @@ def augment_samples(error_type_df,correct_df,
     """
     messages = []
 
-    error_types = 'error_index | error_type_description | notable_pointers\n'
+    error_types = 'error_index | error_type_description | common_patterns\n'
     for idx,cl_name in enumerate(error_type_df.error_type.unique()):
         notable_p = [c for c in error_class.clusters if c.name==cl_name][0]
-        error_types+=f"{idx} | {cl_name} | {notable_p.notable_pointers}\n"
+        error_types+=f"{idx} | {cl_name} | {notable_p.common_patterns}\n"
     #print(error_types)
 
     eligibility_criteria_t = [papers_criteria[num].format(
@@ -364,17 +276,11 @@ def augment_samples(error_type_df,correct_df,
                                     thinking=False
                                     )
     alldf = []
-    '''for i,pmid in enumerate(pmid_list):
-        df = pd.DataFrame([d.model_dump() for d in outputs[i].new_samples])
-        # превращая каждый элемент в отдельную строку
-        df_exploded = df.explode("new_ground_truth").reset_index(drop=True)
-        # Разворачиваем словари в отдельные колонки
-        df_c = pd.json_normalize(df_exploded["new_ground_truth"])
-        df_final = pd.concat([df_exploded.drop(columns=["new_ground_truth"]), df_c], axis=1)
-
+    for i,pmid in enumerate(pmid_list):
+        df_final = pd.DataFrame([d.model_dump() for d in outputs[i].new_samples])
         df_final['PMID'] = pmid
         alldf.append(df_final)
-    alldf = pd.concat(alldf)    '''
+    alldf = pd.concat(alldf)    
 
     '''errors_df.loc[:,['error_type_reason','error_type']] = [[i.reasoning, 
                                 *[j.name for j in outputs.clusters if j.index==i.cluster_index]] 
@@ -384,7 +290,7 @@ def augment_samples(error_type_df,correct_df,
 
 
 
-def add_correct_scores(change_class,
+def add_correct_scores(change_df,
                     fin_condition,treatment):
     
     user_prompt0 = """
@@ -392,14 +298,6 @@ def add_correct_scores(change_class,
     eligibility_criteria = {eligibility_criteria}
     your_response = 
     """
-    messages = []
-
-    change_df = pd.DataFrame([j.model_dump() for i in change_class for j in i.new_samples])
-
-    error_types = 'error_type_index | change_reasoning | new_abstract\n'
-    for c_name in change_df.values:
-        error_types+=f"{c_name[0]} | {c_name[1]} | {c_name[2]}\n"
-    #print(error_types)
 
     eligibility_criteria_t = [papers_criteria[num].format(
                                 treatment=treatment,
@@ -411,13 +309,23 @@ def add_correct_scores(change_class,
         eligibility_criteria+=f"{idx} | {i}\n"
     #print(eligibility_criteria)
 
-    user_prompt = user_prompt0.format(new_abstracts = error_types,
-                                eligibility_criteria=eligibility_criteria)
+    messages = []
+
+    pmid_list = list(change_df.PMID.unique())
+
+    for pmid in pmid_list:
+        error_types = 'error_type_index | change_reasoning | new_abstract\n'
+        for c_name in change_df[change_df.PMID==pmid].values:
+            error_types+=f"{c_name[0]} | {c_name[1]} | {c_name[2]}\n"
+        #print(error_types)
     
-    messages.append([{'role':'system', 
-                        'content':PROMPT_ADD_KNOWN_SCORE+' \no_think'},
-                        {'role':'user', 'content':user_prompt}
-                    ])
+        user_prompt = user_prompt0.format(new_abstracts = error_types,
+                                    eligibility_criteria=eligibility_criteria)
+        
+        messages.append([{'role':'system', 
+                            'content':PROMPT_ADD_KNOWN_SCORE+' \no_think'},
+                            {'role':'user', 'content':user_prompt}
+                        ])
 
     outputs = batch_function_call_openai(messages, 
                                     os.getenv('MODEL_NAME'), 
@@ -427,7 +335,7 @@ def add_correct_scores(change_class,
                                     thinking=False
                                     )
     alldf = []
-    for i,pmid in enumerate(outputs):
+    for i,pmid in enumerate(pmid_list):
         df = pd.DataFrame([d.model_dump() for d in outputs[i].new_samples])
         # превращая каждый элемент в отдельную строку
         df_exploded = df.explode("new_ground_truth").reset_index(drop=True)
@@ -435,8 +343,9 @@ def add_correct_scores(change_class,
         df_c = pd.json_normalize(df_exploded["new_ground_truth"])
         df_final = pd.concat([df_exploded.drop(columns=["new_ground_truth"]), df_c], axis=1)
 
-        #df_final['PMID'] = pmid
+        df_final['PMID'] = pmid
         alldf.append(df_final)
+
     alldf = pd.concat(alldf)   
 
     '''errors_df.loc[:,['error_type_reason','error_type']] = [[i.reasoning, 
@@ -444,3 +353,98 @@ def add_correct_scores(change_class,
                                 for i in outputs.errors]
     '''
     return outputs,alldf
+
+
+if __name__=='__main__':
+
+    #error_type_df = pd.read_csv('outputs/error_type_df.csv', index_col=0)
+    the_path = 'outputs/'
+    real = False # to screen
+    fin_condition='Colorectal cancer'
+    treatment='Crizotinib'
+
+    # ____ real expert answers
+    df_expert = pd.read_csv('new_criteria_ana_en2.csv')
+    df_expert['PMID'] = df_expert['PMID'].astype(str)
+    df_expert[['s1','s2','s3']] = df_expert[['s1','s2','s3']].astype(int)
+    X = df_expert.iloc[:,:1]
+    y = df_expert.iloc[:,]
+    # stratify by accept/not accept. maybe instead by [1,1,0]?
+    X_train, X_test, y_train, y_test = train_test_split(X,y, train_size=0.7, 
+                                                        random_state=42,stratify=df_expert.accept)
+    
+    # ____ model's screening
+    if os.path.exists(f"{the_path}/screening.csv"):
+        screened_df = pd.read_csv(f"{the_path}screening.csv")
+    else:
+        screened_df = run_screening(pmid_list=X_train.PMID.values, 
+                            fin_condition=fin_condition, 
+                            treatment=treatment,
+                            ps_thresh = [1,1,0], real=real)
+        screened_df.to_csv(f"{the_path}/screening.csv",index=False)
+    
+    # ____ mistakes
+    errors_df, correct_df = find_mistakes(screened_df, y_train)
+    correct_df_grouped = correct_df.groupby('PMID').count()['num']
+
+    # ____ error identification
+    if os.path.exists(f"{the_path}/error_id_df.csv"):
+        error_id_df = pd.read_csv(f"{the_path}/error_id_df.csv")
+    else:
+        error_id_df = find_ind_errors(errors_df=errors_df,
+                                fin_condition=fin_condition, 
+                                    treatment=treatment)
+        error_id_df.to_csv(f"{the_path}/error_id_df.csv", index=False)
+
+    # ____ clustering errors
+    if os.path.exists(f"{the_path}/error_type_c.json"):
+        error_type_df = pd.read_csv(f"{the_path}/error_type_df.csv")
+        file_path = Path(f"{the_path}/error_type_c.json")
+        file_content = file_path.read_text(encoding="utf-8")
+        error_type_c = ErrorsAndClusters.model_validate_json(file_content)
+    else:
+        error_type_df, error_type_c = find_error_clusters(error_id_df,
+                                                    fin_condition, treatment)
+        error_type_df.to_csv(f"{the_path}/error_type_df.csv", index=False)
+        file_path = Path(f"{the_path}/error_type_c.json")
+        file_path.write_text(error_type_c.model_dump_json(indent=2), encoding="utf-8")
+
+    print(error_type_c.clusters)
+    error_types = 'error_index | error_type_description | common_patterns\n'
+    for idx,cl_name in enumerate(error_type_df.error_type.unique()):
+        notable_p = [c for c in error_type_c.clusters if c.name==cl_name][0]
+        error_types+=f"{idx} | {cl_name} | {notable_p.common_patterns}\n"
+    print(error_types)
+
+    # ____ augmenting samples
+    if os.path.exists(f"{the_path}/augmented_df.csv"):
+        augmented_df = pd.read_csv(f"{the_path}/augmented_df.csv")
+        #file_path = Path(f"{the_path}/augmented_c.json")
+        #file_content = file_path.read_text(encoding="utf-8")
+        #augmented_c = AugmentedSamples.model_validate_json(file_content)
+    else:
+        augmented_c,augmented_df = augment_samples(error_type_df,correct_df,
+                                error_type_c,
+                                correct_df_grouped[correct_df_grouped==3
+                                                   ].index.values[:2],
+                                fin_condition,treatment)
+        augmented_df.to_csv(f"{the_path}/augmented_df.csv", index=False)
+        #file_path = Path(f"{the_path}/augmented_c.json")
+        #file_path.write_text(augmented_c.model_dump_json(indent=2), encoding="utf-8")
+
+    print(augmented_df.drop(columns=['new_abstract']).values)
+
+    # ____ generating new expert answers
+    if os.path.exists(f"{the_path}/correct_score_df.csv"):
+        correct_score_df = pd.read_csv(f"{the_path}/correct_score_df.csv")
+        #file_path = Path(f"{the_path}/correct_score_c.json")
+        #file_content = file_path.read_text(encoding="utf-8")
+        #correct_score_c = SamplesWIthScore.model_validate_json(file_content)
+    else:
+        correct_score_c,correct_score_df = add_correct_scores(augmented_df,
+                                fin_condition, treatment)
+        correct_score_df.to_csv(f"{the_path}/correct_score_df.csv", index=False)
+        #file_path = Path(f"{the_path}/correct_score_c.json")
+        #file_path.write_text(correct_score_c.model_dump_json(indent=2), encoding="utf-8")
+    print(correct_score_df.head(5))
+    print(correct_score_df.values)

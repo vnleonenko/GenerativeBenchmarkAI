@@ -24,6 +24,7 @@ OPENAI_MODEL_NAME_MAP = {
 }
 httpx_client = httpx.AsyncClient(trust_env=False,verify=False,timeout=600)
 # default timeout for AsyncOpenAI requests is 600 (10min)
+print(os.getenv("OPENAI_API_KEY"))
 async_openai_client = AsyncOpenAI(
     base_url=os.getenv("BASE_URL"),
     api_key=os.getenv("OPENAI_API_KEY"),
@@ -46,8 +47,8 @@ load_dotenv(find_dotenv(usecwd=True))
                )
 async def api_call_single(client: AsyncOpenAI, model: str, messages: list[dict], temperature: float = 0.0, thinking: bool = False, **kwargs):
     # Call the API
-    print(os.getenv("BASE_URL"))#print('\napi_call_single', client.base_url)
-    
+    print(os.getenv("BASE_URL"), os.getenv("OPENAI_API_KEY"))#print('\napi_call_single', client.base_url)
+    print(client.api_key)
     print('timeout:', client.timeout)
     if not thinking:
         messages[0]['content'] = '/set nothink '+messages[0]['content']
@@ -60,7 +61,7 @@ async def api_call_single(client: AsyncOpenAI, model: str, messages: list[dict],
         **kwargs
     )
     #logging.info(f'fresh: {response}')
-    logging.info(f'fresh response in asynch: {response.choices[0].message.content}')
+    #logging.info(f'fresh response in asynch: {response.choices[0].message.content}')
     
     logging.info('')
     return response
@@ -76,12 +77,13 @@ CONTINUE_INSTRUCTION = (
 
 
 @tenacity.retry(wait=tenacity.wait_random_exponential(min=5, max=30),
-                stop=tenacity.stop_after_attempt(5), 
+                stop=tenacity.stop_after_attempt(1), 
                 #reraise=True
                )
 async def api_function_call_single(client: AsyncOpenAI, model: str, messages: list[dict], tools: list[dict], temperature: float = 0.0, thinking: bool = False, **kwargs):
     max_rounds: int = 3
-    print(os.getenv("BASE_URL"),model)
+    print(os.getenv("BASE_URL"),model, os.getenv("OPENAI_API_KEY"))
+    print(client.api_key)
     # Call the API
     #logging.info(f"fresh: {messages[0]['content']}")
     convo = messages
@@ -102,7 +104,7 @@ async def api_function_call_single(client: AsyncOpenAI, model: str, messages: li
             extra_body={"reasoning_effort": reason_e}
             #**kwargs
         )
-        logging.info(f'fresh response in asynch: {response.choices[0].message.parsed}')
+        #logging.info(f'fresh response in asynch: {response.choices[0].message.parsed}')
         logging.info('')
         return response
     

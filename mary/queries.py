@@ -66,17 +66,18 @@ The user will provide:
 - Combine errors with the exact same root cause in the same cluster. The specific output labels are irrelevant.
 - If the root causes differ, create a new cluster.
 - Errors related to different criteria may belong to the same cluster if the root cause is the same.
-3. Name each cluster. 
-- The name should concise and specific (UNDER 100 characters).
-- The name must describe a singe, specific root cause. 
+3. Find common patterns for each cluster.
+- Create a list of distinct short phrases (1-5 items) describing how the root cause manifested in specific abstracts in this cluster.
+- Extract short specific contextual triggers or scenarios from the error descriptions.
+- These patterns will be used to guide a generation of new samples with specific complexities.
+4. Name each cluster. 
+- The name must describe a singe, specific root cause. Analyze chosen common patterns for this cluster.
 - Avoid compound names (e.g., using "or", "and") that combine distinct root causes. 
 - Avoid generic names (e.g., 'Incorrect NO prediction') that encompass multiple distinct root causes.
-4. Assign each error to a cluster. 
+- The name should concise and specific (UNDER 100 characters).
+5. Assign each error to a cluster. 
 - The chosen cluster must describe the specific root cause for this error.
-5. Generate notable pointers for each cluster.
-- Pointers are a list of distinct short phrases (1-5 items) describing how the root cause manifested in specific papers in this cluster.
-- Extract specific contextual triggers or scenarios from the error descriptions.
-- The pointers will be used to guide a generation of new samples with specific complexities.
+
 6. Verify 
 - Ensure each cluster name describes one specific root cause. 
 - Ensure each cluster has errors only with the exact same root cause.
@@ -99,15 +100,15 @@ your_response =
     {"reasoning":"...",
     "index":0,
     "name":"The model treats 'not mentioned' as 'possible'",
-    "notable_pointers":[
+    "common_patterns":[
       "No mention", 
       "No mention; explicit focus on Condition B"
     ]},
     {"reasoning":"...",
     "index":1,
     "name":"The model confuses background keywords with the study focus",
-    "notable_pointers":[
-      "Mentioned, but focus on gene mutations"
+    "common_patterns":[
+      "Mentioned X, but focus on gene mutations"
     ]}
   ],
   "errors":[
@@ -214,6 +215,8 @@ your_response =
 You MUST return ONLY valid JSON, Do NOT include any explanations, comments, or extra text.
 '''
 
+#  - Do not just copy the common_patterns; create similar manifestations.
+
 PROMPT_AUGMENT='''
 You are an Error Analyst for a Systematic Review system. You will be given a list of error types the model made during paper screening. Your task is to create new samples; they will be used to train the model on complex data.
 
@@ -226,21 +229,22 @@ The user will provide:
 # Task 
 1. Analyze error_types. 
 - Determine the root cause stated in the name. 
-- Analyze notable_pointers, examples of how the root cause manifested.
+- Analyze common_patterns: how the root cause manifests.
 - Analyze how the expert originally screened the abstract: this can help choose the sentences to change.
 
 2. Rewrite the original abstract for each error type
+- Create two versions for each error type.
+- State clearly 1) what you changed and 2) what the change tests in the model.
 - Change/add/delete abstract sentences, so the model will make the specified error after analysing the abstract. 
-  - Do not just copy the notable_pointers; create similar manifestations.
   - Make sure the changes correspond to the chosen error type.
   - Make sure the changes do NOT correspond to another error type.
   - Make sure you do not leave sentences which cancel out the added complexity.
 
 3. Verify 
-- Ensure the number of items inside `new_samples` matches the number of provided `error_types`.
+- Ensure the number of items inside `new_samples` matches the number of provided `error_types` times two.
 
 # Example: 
-error_types = "error_index | error_type_description | notable_pointers
+error_types = "error_index | error_type_description | common_patterns
 0 | The model confuses background keywords with the study focus | ['Mentioned, but focus on gene mutations']
 1 | The model treats 'not mentioned' as 'possible' | ['No mention', 'No mention of condition A; explicit focus on condition B']
 "
@@ -259,12 +263,25 @@ your_response =
 {
 "new_samples":[
   {"error_type_index":0,
+    "sample_index":0,
     "reasoning":"Added a sentence mentioning 'condition X' in the background context, while the main investigation is on 'gene mutations'. This tests if the model incorrectly focuses on the background keyword 'condition X' instead of the actual study focus.",
     "new_abstract":"Gene mutations K and B make patients with condition X,Y,Z sensitive to treatments with Q. Here we investigate gene mutations, which cause the sensitivity ..."
     },
+  {"error_type_index":0,
+    "sample_index":1,
+    "reasoning":"...",
+    "new_abstract":"..."
+    },
   {"error_type_index":1,
+   "sample_index":0,
     "reasoning":"Removed all mentions of 'condition X'. This tests if the model incorrectly assumes 'condition X' is investigated because it is not explicitly excluded.",
     "new_abstract":"Gene mutations K and B make patients with different conditions sensitive to treatments with Q. Here we investigate treating patients with condition Y with treatment Q..."
+    },
+  {"error_type_index":1,
+   "sample_index":1,
+    "reasoning":"...",
+    "new_abstract":"..."
+    }
 ]
 }
 ```
@@ -274,34 +291,35 @@ You MUST return ONLY valid JSON, Do NOT include any explanations, comments, or e
 '''
 
 PROMPT_ADD_KNOWN_SCORE='''
-You are a Systematic Reviewer. You will be given a list of new complex abstracts, corresponding complexity, and what it tests in the model. Your task is to rewrite ground truth answers; they will be used to train the model on complex data.
+You are a Systematic Reviewer. You will be given a list of new complex abstracts, corresponding complexity, and what it tests in the model. Your task is to create new ground truth answers; they will be used to train the model on complex data.
 
 The user will provide:
 - `new_abstracts`: The description of each change in a table format.
 - `eligibility_criteria`: The list of criteria for paper inclusion/exclusion in a table format.
 
-# Task 
-1. Analyze change_reasoning. 
-- Determine the root cause. 
-- Determine what the change tests.
-- Determine the correct screening output.
+# Initial scoring rules
+1. Score:
+- "1": YES. The criterion is met.
+- "-1": NO. The criterion is NOT met.
+- "0": UNCERTAIN. 
+Note on Terminology. You must recognize semantic equivalence. Drug codes, generic names, and brand names are considered the same entity. If the text uses a synonym or code for the required intervention, it counts as a match.
+2. Rationale: 
+For each decision, provide a concise rationale. You MUST quote or paraphrase the specific section of the new abstract that led to your decision. If the decision is UNCERTAIN, state clearly what information is missing.
 
-2. Write the new ground truth score and rationale for each criterion. (The expected model answer is not recorded, only the ground truth).
-- Determine what should be the correct output based on what the new change tests.
-- Rewrite the expert rationale to point out how to navigate the added complexity and assign the correct score.
-- Change the expert score accordingly.
-- Make sure that the new ground truth DOES NOT make the expected model error. 
+# Your task 
+1. Determine the correct screening output.
+- Analyze change_reasoning: it describes the added change and what it tests in the model.
+- Determine the error the model is expected to make.
+- Determine what should be the correct output based on what the new change expects from the model. The new_expert_score must represent the correct assessment, which is the opposite of the model's expected error. E.g., if the model is expected to incorrectly include a criterion, the ground truth must be 'NO'.
+- Concisely state, what the change tests and what must be the correct output.
 
-2.1 Score:
-  - "1": YES. The content explicitly states information that confirms the criterion is met.
-  - "-1": NO. The content explicitly states information that confirms the criterion is NOT met.
-  - "0": UNCERTAIN. The content does not provide sufficient information to make a definitive decision. Without guessing; if the information is missing or ambiguous,  UNCERTAIN.
-  Note on Terminology. You must recognize semantic equivalence. Drug codes, generic names, and brand names are considered the same entity. If the text uses a synonym or code for the required intervention, it counts as a match.
-2.2 Rationale: 
-  For each decision, provide a concise rationale. You MUST quote or paraphrase the specific section of the `Provided paper content` that led to your decision. If the decision is UNCERTAIN, state clearly what information is missing.
+2. Write the new ground truth score and rationale for each criterion according to 'Initial scoring rules'. 
+- The expected model answer is not recorded, record only the ground truth.
+- Make sure the new ground truth DOES NOT make the expected model error. 
+- Create a new_expert_rationale to point out how to 1) navigate the complexity and 2) assign the correct score for a given criterion. 
+- Create a new_expert_score accordingly.
 
 3. Verify 
-- Ensure the number of items inside `new_abstracts` matches the number of provided `error_types`.
 - Ensure the number of iterms inside `new_ground_truth` matches the number of provided `eligibility_criteria`.
 - Ensure the `new_expert_score` and `new_expert_rationale` are about the matched `criteria_index`.
 - Ensure the `new_expert_score` is the ground truth based on the `new_abstract`.
@@ -322,7 +340,7 @@ your_response =
 {
 "new_samples":[
   {"error_type_index":0,
-    "reasoning":"This tests: if the model incorrectly focuses on the background 'condition X' instead of the actual study focus. It means: that now the criterion for 'condition X' is not met",
+    "reasoning":"This tests: if the model incorrectly focuses on the background 'condition X' instead of the actual study focus. It means: now the criterion for 'condition X' is not met",
     "new_ground_truth":[
       {"criteria_index":0,
       "new_expert_rationale": "Condition X is only mentioned as part of the background context regarding sensitivity. The study explicitly states 'Here we investigate gene mutations', so it does not investigate condition X as the primary focus",
@@ -333,7 +351,7 @@ your_response =
     ]
     },
   {"error_type_index":1,
-    "reasoning":"This tests: if the model incorrectly assumes condition X is investigated because it is not explicitly excluded. It means: that now the criterion for 'condition X' is not met",
+    "reasoning":"This tests: if the model incorrectly assumes condition X is investigated because it is not explicitly excluded. It means: now the criterion for 'condition X' is not met",
     "new_ground_truth":[
       {"criteria_index":0,
       "new_expert_rationale": "No mention of Condition X, so the study does not investigate condition X",

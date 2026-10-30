@@ -1,0 +1,216 @@
+{
+  "reasoning": "The errors can be clustered into four distinct root causes based on the cognitive mechanism of the failure:\n1. **Confusing Background/Context with Study Focus**: The model incorrectly interprets mentions of Colorectal Cancer (CRC) in lists, background sections, or as examples in reviews as evidence that CRC is the primary subject or that patients/samples were included. This applies to Criteria 1, 2, and 3.\n2. **Misinterpreting Study Design/Methodology**: The model fails to distinguish between primary research (clinical trials, wet lab) and secondary/computational studies (reviews, in silico predictions, bioinformatics). It incorrectly assumes these designs involve actual patient samples or experimental interventions. This applies to Criteria 1, 2, and 3.\n3. **Failing to Infer Definitive Exclusion from Specificity**: The model assigns 'UNCERTAIN' when the study explicitly focuses on a different cancer type (e.g., NSCLC) or general cancer patients, ignoring that this specificity definiti",
+  "clusters": [
+    {
+      "reasoning": "The model fails to distinguish between a disease mentioned as background context, an example, or part of a list versus the disease being the actual subject of the study. It treats any mention as inclusion.",
+      "index": 0,
+      "name": "Confusing background mentions or examples with primary study focus",
+      "common_patterns": [
+        "Mentioned in list of biomarker applications",
+        "Background mention in review article",
+        "Listed as example of ALK-associated disease",
+        "Passing mention in conclusion/background"
+      ]
+    },
+    {
+      "reasoning": "The model fails to recognize that reviews, in silico predictions, or bioinformatics analyses do not constitute primary studies with patients, animal models, or experimental interventions. It conflates computational/theoretical work with empirical investigation.",
+      "index": 1,
+      "name": "Misinterpreting reviews or in silico studies as primary experimental research",
+      "common_patterns": [
+        "Review article summarized existing knowledge",
+        "In silico prediction of efficacy",
+        "Bioinformatics prediction of drug candidates",
+        "Computational drug sensitivity correlation"
+      ]
+    },
+    {
+      "reasoning": "The model assigns 'UNCERTAIN' when the study explicitly focuses on a different condition (e.g., NSCLC) or a general population (e.g., 'male cancer patients'), failing to recognize that this specificity constitutes a definitive exclusion for the target condition (CRC).",
+      "index": 2,
+      "name": "Failing to infer definitive exclusion from focus on other conditions",
+      "common_patterns": [
+        "Focus on NSCLC, CRC only background",
+        "General 'cancer patients' without specifying CRC",
+        "Explicit exclusion from approved indications",
+        "Efficacy reported for entire cohort, not CRC"
+      ]
+    },
+    {
+      "reasoning": "The model assigns 'UNCERTAIN' when the study investigates a different outcome (e.g., side effects, biomarkers) or lacks any efficacy data, failing to recognize that the absence of the specific required outcome (therapeutic effectiveness) is a definitive exclusion.",
+      "index": 3,
+      "name": "Failing to recognize absence of specific efficacy outcome as definitive exclusion",
+      "common_patterns": [
+        "Evaluated endocrine side effects, not antitumor activity",
+        "No efficacy evaluation, only in silico screening",
+        "Response rates apply to other indications only",
+        "Lack of disease-specific efficacy data"
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "reasoning": "The model confused a list of biomarker applications with the study's primary focus on CRC.",
+      "error_index": 0,
+      "cluster_index": 0
+    },
+    {
+      "reasoning": "The model failed to recognize that 'general male cancer patients' excludes specific CRC focus, class",
+      "error_index": 1,
+      "cluster_index": 2
+    },
+    {
+      "reasoning": "The model failed to recognize that 'general cancer patients' excludes specific CRC focus.",
+      "error_index": 2,
+      "cluster_index": 2
+    },
+    {
+      "reasoning": "The model failed to recognize that evaluating side effects instead of efficacy is a definitive NO.",
+      "error_index": 3,
+      "cluster_index": 3
+    },
+    {
+      "reasoning": "The model confused a list of affected cancers with efficacy evaluation for CRC.",
+      "error_index": 4,
+      "cluster_index": 0
+    },
+    {
+      "reasoning": "The model failed to recognize that linking Crizotinib to NSCLC excludes CRC.",
+      "error_index": 5,
+      "cluster_index": 2
+    },
+    {
+      "reasoning": "The model confused a list of ROS1 rearrangements with CRC patient inclusion.",
+      "error_index": 6,
+      "cluster_index": 0
+    },
+    {
+      "reasoning": "The model failed to recognize a review article does not include original patients.",
+      "error_index": 7,
+      "cluster_index": 1
+    },
+    {
+      "reasoning": "The model confused a background mention of CRC with actual inclusion of CRC subjects.",
+      "error_index": 8,
+      "cluster_index": 0
+    },
+    {
+      "reasoning": "The model confused a background example in a review with active study of CRC.",
+      "error_index": 9,
+      "cluster_index": 0
+    },
+    {
+      "reasoning": "The model confused a list of responder types with specific CRC focus.",
+      "error_index": 10,
+      "cluster_index": 0
+    },
+    {
+      "reasoning": "The model failed to distinguish a policy review from a study involving patients.",
+      "error_index": 11,
+      "cluster_index": 1
+    },
+    {
+      "reasoning": "The model classified in silico prediction as an experimental intervention.",
+      "error_index": 12,
+      "cluster_index": 1
+    },
+    {
+      "reasoning": "The model failed to recognize that lack of efficacy evaluation in in silico study is a definitive NO",
+      "error_index": 13,
+      "cluster_index": 3
+    },
+    {
+      "reasoning": "The model failed to recognize that effectiveness limited to NSCLC excludes CRC.",
+      "error_index": 14,
+      "cluster_index": 2
+    },
+    {
+      "reasoning": "The model failed to recognize that linking Crizotinib to NSCLC excludes CRC.",
+      "error_index": 15,
+      "cluster_index": 2
+    },
+    {
+      "reasoning": "The model confused a background list of diseases with the study's focus.",
+      "error_index": 16,
+      "cluster_index": 0
+    },
+    {
+      "reasoning": "The model classified bioinformatics prediction as experimental investigation.",
+      "error_index": 17,
+      "cluster_index": 1
+    },
+    {
+      "reasoning": "The model failed to recognize that background mention of CRC does not constitute efficacy evaluation",
+      "error_index": 18,
+      "cluster_index": 0
+    },
+    {
+      "reasoning": "The model confused a background listing with a studied condition.",
+      "error_index": 19,
+      "cluster_index": 0
+    },
+    {
+      "reasoning": "The model failed to recognize that linking Crizotinib to NSCLC excludes CRC.",
+      "error_index": 20,
+      "cluster_index": 2
+    },
+    {
+      "reasoning": "The model failed to recognize explicit exclusion of CRC as definitive NO.",
+      "error_index": 21,
+      "cluster_index": 2
+    },
+    {
+      "reasoning": "The model failed to recognize explicit exclusion of CRC as definitive NO.",
+      "error_index": 22,
+      "cluster_index": 2
+    },
+    {
+      "reasoning": "The model failed to recognize a review article does not include original patients.",
+      "error_index": 23,
+      "cluster_index": 1
+    },
+    {
+      "reasoning": "The model conflated general ALK activity with specific Crizotinib efficacy for CRC.",
+      "error_index": 24,
+      "cluster_index": 3
+    },
+    {
+      "reasoning": "The model confused a passing mention in a review with primary investigation.",
+      "error_index": 25,
+      "cluster_index": 0
+    },
+    {
+      "reasoning": "The model equated general mention in a review with specific investigation.",
+      "error_index": 26,
+      "cluster_index": 0
+    },
+    {
+      "reasoning": "The model classified computational correlation as experimental investigation.",
+      "error_index": 27,
+      "cluster_index": 1
+    },
+    {
+      "reasoning": "The model conflated background context with actual study population.",
+      "error_index": 28,
+      "cluster_index": 0
+    },
+    {
+      "reasoning": "The model assumed investigation based on background mention, ignoring general cohort.",
+      "error_index": 29,
+      "cluster_index": 0
+    },
+    {
+      "reasoning": "The model failed to recognize that efficacy for entire cohort excludes specific CRC data.",
+      "error_index": 30,
+      "cluster_index": 3
+    },
+    {
+      "reasoning": "The model classified computational prediction as experimental investigation.",
+      "error_index": 31,
+      "cluster_index": 1
+    },
+    {
+      "reasoning": "The model failed to recognize that computational predictions lack therapeutic effectiveness data",
+      "error_index": 32,
+      "cluster_index": 3
+    }
+  ]
+}
